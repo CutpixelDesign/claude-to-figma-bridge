@@ -1,0 +1,12 @@
+{
+  "name": "Claude Bridge",
+  "id": "claude-bridge-local",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": ["*"],
+    "reasoning": "Requires access to local bridge server at localhost:3571"
+  }
+}

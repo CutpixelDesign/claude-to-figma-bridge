@@ -1,0 +1,12 @@
+{
+  "name": "claude-bridge-server",
+  "version": "1.0.0",
+  "description": "Local bridge server between Claude and Figma",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

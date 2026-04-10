@@ -1,0 +1,19 @@
+{
+  "name": "claude-bridge",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:code && npm run build:ui",
+    "build:code": "esbuild src/code.js --bundle --outfile=code.js --format=iife --target=es6 --platform=browser",
+    "build:ui": "vite build && cp dist/src/ui/index.html ui.html",
+    "watch": "concurrently \"npm run build:code -- --watch\" \"vite build --watch\""
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "concurrently": "^8.0.0",
+    "esbuild": "^0.20.0",
+    "svelte": "^4.0.0",
+    "vite": "^5.0.0",
+    "vite-plugin-singlefile": "^2.0.0"
+  }
+}
