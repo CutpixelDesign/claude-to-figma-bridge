@@ -1,6 +1,6 @@
 // Mutating actions on existing nodes: geometry, fills, strokes, typography, layout.
 import {
-  requireNode, nodeInfo, toRGBA, solidPaint, normalizePaint, normalizeEffect, isColorInput, loadNodeFonts, applyTextProps, parseLineHeight, parseLetterSpacing, normalizeGrid, describeGrid, pageNodeOf, errorMessage, loadFont,
+  requireNode, nodeInfo, toRGBA, solidPaint, normalizePaint, normalizeEffect, isColorInput, loadNodeFonts, applyTextProps, parseLineHeight, parseLetterSpacing, normalizeGrid, describeGrid, pageNodeOf, errorMessage, loadFont, resolveScope, runState,
 } from '../lib/helpers.js';
 
 export const editHandlers = {
@@ -455,57 +455,29 @@ export const editHandlers = {
 
   async set_text_range(params) {
     // Style part of a text: one word bold, a link, a list. params: nodeId, and either
-    // start/end (character offsets, end exclusive; default: whole text) or match (a substring
-    // — every occurrence is styled). Then any of: family?, style?, variationSettings?, size?,
-    // color? + opacity?, fills?, lineHeight?, letterSpacing?, textCase?, textDecoration?,
-    // hyperlink? (URL string, { type: 'NODE', value: nodeId }, or null), listType?
-    // ('ORDERED'|'UNORDERED'|'NONE'), indentation?, paragraphSpacing?, paragraphIndent?,
-    // textStyleId?, fillStyleId?
+    // start/end (character offsets, end exclusive; default: whole text) or match (a substring,
+    // or a list of them — every occurrence is styled). Then any of: family?, style?,
+    // variationSettings?, size?, color? + opacity?, fills?, lineHeight?, letterSpacing?,
+    // textCase?, textDecoration?, hyperlink? (URL string, { type: 'NODE', value: nodeId }, or
+    // null), listType? ('ORDERED'|'UNORDERED'|'NONE'), indentation?, paragraphSpacing?,
+    // paragraphIndent?, textStyleId?, fillStyleId?
+    // scopeId instead of nodeId: every text under that node (match required); onlyFontSize?
+    // keeps texts that have that size somewhere (e.g. body copy, not headings).
+    if (params.scopeId !== undefined) return setTextRangeInScope(params);
     const node = await requireNode(params.nodeId);
     if (node.type !== 'TEXT') throw new Error('Node is not a text layer');
     await loadNodeFonts(node);
-    const ranges = [];
+    let ranges;
+    let notFound = [];
     if (params.match !== undefined) {
-      if (!params.match) throw new Error('match must be a non-empty string');
-      let i = node.characters.indexOf(params.match);
-      while (i !== -1) {
-        ranges.push([i, i + params.match.length]);
-        i = node.characters.indexOf(params.match, i + params.match.length);
-      }
-      if (!ranges.length) throw new Error(`Text not found: "${params.match}"`);
+      const phrases = matchPhrases(params.match);
+      ({ ranges, notFound } = findPhrases(node.characters, phrases));
+      if (!ranges.length) throw new Error(`Text not found: ${phrases.map(p => `"${p}"`).join(', ')}`);
     } else {
-      ranges.push([params.start ?? 0, params.end ?? node.characters.length]);
+      ranges = [[params.start ?? 0, params.end ?? node.characters.length]];
     }
-    for (const [a, b] of ranges) {
-      if (params.family !== undefined || params.style !== undefined || params.variationSettings !== undefined) {
-        const cur = node.getRangeFontName(a, a + 1);
-        const font = { family: params.family ?? cur.family };
-        const style = params.style ?? (params.variationSettings ? undefined : params.family ? 'Regular' : cur.style);
-        if (style) font.style = style;
-        if (params.variationSettings) font.variationSettings = params.variationSettings;
-        await loadFont(font);
-        node.setRangeFontName(a, b, font);
-      }
-      if (params.size !== undefined) node.setRangeFontSize(a, b, params.size);
-      if (params.fills !== undefined) node.setRangeFills(a, b, params.fills.map(normalizePaint));
-      else if (params.color !== undefined) node.setRangeFills(a, b, [solidPaint(params.color, params.opacity)]);
-      if (params.lineHeight !== undefined) node.setRangeLineHeight(a, b, parseLineHeight(params.lineHeight));
-      if (params.letterSpacing !== undefined) node.setRangeLetterSpacing(a, b, parseLetterSpacing(params.letterSpacing));
-      if (params.textCase !== undefined) node.setRangeTextCase(a, b, params.textCase);
-      if (params.textDecoration !== undefined) node.setRangeTextDecoration(a, b, params.textDecoration);
-      if (params.hyperlink !== undefined) {
-        const link = params.hyperlink === null ? null
-          : typeof params.hyperlink === 'string' ? { type: 'URL', value: params.hyperlink } : params.hyperlink;
-        node.setRangeHyperlink(a, b, link);
-      }
-      if (params.listType !== undefined) node.setRangeListOptions(a, b, { type: params.listType });
-      if (params.indentation !== undefined) node.setRangeIndentation(a, b, params.indentation);
-      if (params.paragraphSpacing !== undefined) node.setRangeParagraphSpacing(a, b, params.paragraphSpacing);
-      if (params.paragraphIndent !== undefined) node.setRangeParagraphIndent(a, b, params.paragraphIndent);
-      if (params.textStyleId !== undefined) await node.setRangeTextStyleIdAsync(a, b, params.textStyleId);
-      if (params.fillStyleId !== undefined) await node.setRangeFillStyleIdAsync(a, b, params.fillStyleId);
-    }
-    return { success: true, ranges };
+    for (const [a, b] of ranges) await styleTextRange(node, a, b, params);
+    return notFound.length ? { success: true, ranges, notFound } : { success: true, ranges };
   },
 
   async set_layout_grids(params) {
@@ -592,3 +564,96 @@ export const editHandlers = {
     return { success: true };
   },
 };
+
+function matchPhrases(match) {
+  const phrases = Array.isArray(match) ? match : [match];
+  if (!phrases.length || phrases.some(p => typeof p !== 'string' || !p)) {
+    throw new Error('match must be a non-empty string or a list of them');
+  }
+  return phrases;
+}
+
+// Every occurrence of each phrase, as sorted [start, end) ranges, plus the phrases not found.
+function findPhrases(text, phrases) {
+  const ranges = [];
+  const notFound = [];
+  for (const p of phrases) {
+    let i = text.indexOf(p);
+    if (i === -1) notFound.push(p);
+    while (i !== -1) {
+      ranges.push([i, i + p.length]);
+      i = text.indexOf(p, i + p.length);
+    }
+  }
+  ranges.sort((x, y) => x[0] - y[0]);
+  return { ranges, notFound };
+}
+
+async function styleTextRange(node, a, b, params) {
+  if (params.family !== undefined || params.style !== undefined || params.variationSettings !== undefined) {
+    const cur = node.getRangeFontName(a, a + 1);
+    const font = { family: params.family ?? cur.family };
+    const style = params.style ?? (params.variationSettings ? undefined : params.family ? 'Regular' : cur.style);
+    if (style) font.style = style;
+    if (params.variationSettings) font.variationSettings = params.variationSettings;
+    await loadFont(font);
+    node.setRangeFontName(a, b, font);
+  }
+  if (params.size !== undefined) node.setRangeFontSize(a, b, params.size);
+  if (params.fills !== undefined) node.setRangeFills(a, b, params.fills.map(normalizePaint));
+  else if (params.color !== undefined) node.setRangeFills(a, b, [solidPaint(params.color, params.opacity)]);
+  if (params.lineHeight !== undefined) node.setRangeLineHeight(a, b, parseLineHeight(params.lineHeight));
+  if (params.letterSpacing !== undefined) node.setRangeLetterSpacing(a, b, parseLetterSpacing(params.letterSpacing));
+  if (params.textCase !== undefined) node.setRangeTextCase(a, b, params.textCase);
+  if (params.textDecoration !== undefined) node.setRangeTextDecoration(a, b, params.textDecoration);
+  if (params.hyperlink !== undefined) {
+    const link = params.hyperlink === null ? null
+      : typeof params.hyperlink === 'string' ? { type: 'URL', value: params.hyperlink } : params.hyperlink;
+    node.setRangeHyperlink(a, b, link);
+  }
+  if (params.listType !== undefined) node.setRangeListOptions(a, b, { type: params.listType });
+  if (params.indentation !== undefined) node.setRangeIndentation(a, b, params.indentation);
+  if (params.paragraphSpacing !== undefined) node.setRangeParagraphSpacing(a, b, params.paragraphSpacing);
+  if (params.paragraphIndent !== undefined) node.setRangeParagraphIndent(a, b, params.paragraphIndent);
+  if (params.textStyleId !== undefined) await node.setRangeTextStyleIdAsync(a, b, params.textStyleId);
+  if (params.fillStyleId !== undefined) await node.setRangeFillStyleIdAsync(a, b, params.fillStyleId);
+}
+
+// set_text_range over every text under scopeId: one call styles a phrase across a whole
+// section. Texts without a match are skipped; a text that fails (missing font…) goes to
+// errors and the rest still run.
+async function setTextRangeInScope(params) {
+  if (params.match === undefined) throw new Error('scopeId needs match — start/end only make sense for one text');
+  const phrases = matchPhrases(params.match);
+  const scope = await resolveScope(params.scopeId);
+  const texts = scope.type === 'TEXT' ? [scope] : 'findAllWithCriteria' in scope ? scope.findAllWithCriteria({ types: ['TEXT'] }) : [];
+  const applied = [];
+  const errors = [];
+  const found = new Set();
+  const run = runState.current;
+  let lastYield = Date.now();
+  for (const node of texts) {
+    // Same as batch: let the watchdog fire on long runs, and stop once it has given up.
+    if (Date.now() - lastYield > 50) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      lastYield = Date.now();
+    }
+    if (run && run.aborted) break;
+    let { ranges } = findPhrases(node.characters, phrases);
+    if (params.onlyFontSize !== undefined) ranges = ranges.filter(([a, b]) => node.getRangeFontSize(a, b) === params.onlyFontSize);
+    if (!ranges.length) continue;
+    try {
+      await loadNodeFonts(node);
+      for (const [a, b] of ranges) await styleTextRange(node, a, b, params);
+      for (const [a, b] of ranges) found.add(node.characters.slice(a, b));
+      applied.push({ nodeId: node.id, name: node.name, ranges });
+    } catch (e) {
+      errors.push({ nodeId: node.id, name: node.name, error: errorMessage(e) });
+    }
+  }
+  const notFound = phrases.filter(p => !found.has(p));
+  const result = { success: true, texts: texts.length, applied };
+  if (notFound.length) result.notFound = notFound;
+  if (errors.length) result.errors = errors;
+  return result;
+}

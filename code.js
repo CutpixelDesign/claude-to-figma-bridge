@@ -1631,69 +1631,26 @@
       return { success: true, annotations: node.annotations };
     },
     async set_text_range(params) {
-      var _a, _b, _c, _d;
+      var _a, _b;
+      if (params.scopeId !== void 0)
+        return setTextRangeInScope(params);
       const node = await requireNode(params.nodeId);
       if (node.type !== "TEXT")
         throw new Error("Node is not a text layer");
       await loadNodeFonts(node);
-      const ranges = [];
+      let ranges;
+      let notFound = [];
       if (params.match !== void 0) {
-        if (!params.match)
-          throw new Error("match must be a non-empty string");
-        let i = node.characters.indexOf(params.match);
-        while (i !== -1) {
-          ranges.push([i, i + params.match.length]);
-          i = node.characters.indexOf(params.match, i + params.match.length);
-        }
+        const phrases = matchPhrases(params.match);
+        ({ ranges, notFound } = findPhrases(node.characters, phrases));
         if (!ranges.length)
-          throw new Error(`Text not found: "${params.match}"`);
+          throw new Error(`Text not found: ${phrases.map((p) => `"${p}"`).join(", ")}`);
       } else {
-        ranges.push([(_a = params.start) != null ? _a : 0, (_b = params.end) != null ? _b : node.characters.length]);
+        ranges = [[(_a = params.start) != null ? _a : 0, (_b = params.end) != null ? _b : node.characters.length]];
       }
-      for (const [a, b] of ranges) {
-        if (params.family !== void 0 || params.style !== void 0 || params.variationSettings !== void 0) {
-          const cur = node.getRangeFontName(a, a + 1);
-          const font = { family: (_c = params.family) != null ? _c : cur.family };
-          const style = (_d = params.style) != null ? _d : params.variationSettings ? void 0 : params.family ? "Regular" : cur.style;
-          if (style)
-            font.style = style;
-          if (params.variationSettings)
-            font.variationSettings = params.variationSettings;
-          await loadFont(font);
-          node.setRangeFontName(a, b, font);
-        }
-        if (params.size !== void 0)
-          node.setRangeFontSize(a, b, params.size);
-        if (params.fills !== void 0)
-          node.setRangeFills(a, b, params.fills.map(normalizePaint));
-        else if (params.color !== void 0)
-          node.setRangeFills(a, b, [solidPaint(params.color, params.opacity)]);
-        if (params.lineHeight !== void 0)
-          node.setRangeLineHeight(a, b, parseLineHeight(params.lineHeight));
-        if (params.letterSpacing !== void 0)
-          node.setRangeLetterSpacing(a, b, parseLetterSpacing(params.letterSpacing));
-        if (params.textCase !== void 0)
-          node.setRangeTextCase(a, b, params.textCase);
-        if (params.textDecoration !== void 0)
-          node.setRangeTextDecoration(a, b, params.textDecoration);
-        if (params.hyperlink !== void 0) {
-          const link = params.hyperlink === null ? null : typeof params.hyperlink === "string" ? { type: "URL", value: params.hyperlink } : params.hyperlink;
-          node.setRangeHyperlink(a, b, link);
-        }
-        if (params.listType !== void 0)
-          node.setRangeListOptions(a, b, { type: params.listType });
-        if (params.indentation !== void 0)
-          node.setRangeIndentation(a, b, params.indentation);
-        if (params.paragraphSpacing !== void 0)
-          node.setRangeParagraphSpacing(a, b, params.paragraphSpacing);
-        if (params.paragraphIndent !== void 0)
-          node.setRangeParagraphIndent(a, b, params.paragraphIndent);
-        if (params.textStyleId !== void 0)
-          await node.setRangeTextStyleIdAsync(a, b, params.textStyleId);
-        if (params.fillStyleId !== void 0)
-          await node.setRangeFillStyleIdAsync(a, b, params.fillStyleId);
-      }
-      return { success: true, ranges };
+      for (const [a, b] of ranges)
+        await styleTextRange(node, a, b, params);
+      return notFound.length ? { success: true, ranges, notFound } : { success: true, ranges };
     },
     async set_layout_grids(params) {
       var _a;
@@ -1772,6 +1729,114 @@
       return { success: true };
     }
   };
+  function matchPhrases(match) {
+    const phrases = Array.isArray(match) ? match : [match];
+    if (!phrases.length || phrases.some((p) => typeof p !== "string" || !p)) {
+      throw new Error("match must be a non-empty string or a list of them");
+    }
+    return phrases;
+  }
+  function findPhrases(text, phrases) {
+    const ranges = [];
+    const notFound = [];
+    for (const p of phrases) {
+      let i = text.indexOf(p);
+      if (i === -1)
+        notFound.push(p);
+      while (i !== -1) {
+        ranges.push([i, i + p.length]);
+        i = text.indexOf(p, i + p.length);
+      }
+    }
+    ranges.sort((x, y) => x[0] - y[0]);
+    return { ranges, notFound };
+  }
+  async function styleTextRange(node, a, b, params) {
+    var _a, _b;
+    if (params.family !== void 0 || params.style !== void 0 || params.variationSettings !== void 0) {
+      const cur = node.getRangeFontName(a, a + 1);
+      const font = { family: (_a = params.family) != null ? _a : cur.family };
+      const style = (_b = params.style) != null ? _b : params.variationSettings ? void 0 : params.family ? "Regular" : cur.style;
+      if (style)
+        font.style = style;
+      if (params.variationSettings)
+        font.variationSettings = params.variationSettings;
+      await loadFont(font);
+      node.setRangeFontName(a, b, font);
+    }
+    if (params.size !== void 0)
+      node.setRangeFontSize(a, b, params.size);
+    if (params.fills !== void 0)
+      node.setRangeFills(a, b, params.fills.map(normalizePaint));
+    else if (params.color !== void 0)
+      node.setRangeFills(a, b, [solidPaint(params.color, params.opacity)]);
+    if (params.lineHeight !== void 0)
+      node.setRangeLineHeight(a, b, parseLineHeight(params.lineHeight));
+    if (params.letterSpacing !== void 0)
+      node.setRangeLetterSpacing(a, b, parseLetterSpacing(params.letterSpacing));
+    if (params.textCase !== void 0)
+      node.setRangeTextCase(a, b, params.textCase);
+    if (params.textDecoration !== void 0)
+      node.setRangeTextDecoration(a, b, params.textDecoration);
+    if (params.hyperlink !== void 0) {
+      const link = params.hyperlink === null ? null : typeof params.hyperlink === "string" ? { type: "URL", value: params.hyperlink } : params.hyperlink;
+      node.setRangeHyperlink(a, b, link);
+    }
+    if (params.listType !== void 0)
+      node.setRangeListOptions(a, b, { type: params.listType });
+    if (params.indentation !== void 0)
+      node.setRangeIndentation(a, b, params.indentation);
+    if (params.paragraphSpacing !== void 0)
+      node.setRangeParagraphSpacing(a, b, params.paragraphSpacing);
+    if (params.paragraphIndent !== void 0)
+      node.setRangeParagraphIndent(a, b, params.paragraphIndent);
+    if (params.textStyleId !== void 0)
+      await node.setRangeTextStyleIdAsync(a, b, params.textStyleId);
+    if (params.fillStyleId !== void 0)
+      await node.setRangeFillStyleIdAsync(a, b, params.fillStyleId);
+  }
+  async function setTextRangeInScope(params) {
+    if (params.match === void 0)
+      throw new Error("scopeId needs match \u2014 start/end only make sense for one text");
+    const phrases = matchPhrases(params.match);
+    const scope = await resolveScope(params.scopeId);
+    const texts = scope.type === "TEXT" ? [scope] : "findAllWithCriteria" in scope ? scope.findAllWithCriteria({ types: ["TEXT"] }) : [];
+    const applied = [];
+    const errors = [];
+    const found = /* @__PURE__ */ new Set();
+    const run = runState.current;
+    let lastYield = Date.now();
+    for (const node of texts) {
+      if (Date.now() - lastYield > 50) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        lastYield = Date.now();
+      }
+      if (run && run.aborted)
+        break;
+      let { ranges } = findPhrases(node.characters, phrases);
+      if (params.onlyFontSize !== void 0)
+        ranges = ranges.filter(([a, b]) => node.getRangeFontSize(a, b) === params.onlyFontSize);
+      if (!ranges.length)
+        continue;
+      try {
+        await loadNodeFonts(node);
+        for (const [a, b] of ranges)
+          await styleTextRange(node, a, b, params);
+        for (const [a, b] of ranges)
+          found.add(node.characters.slice(a, b));
+        applied.push({ nodeId: node.id, name: node.name, ranges });
+      } catch (e) {
+        errors.push({ nodeId: node.id, name: node.name, error: errorMessage(e) });
+      }
+    }
+    const notFound = phrases.filter((p) => !found.has(p));
+    const result = { success: true, texts: texts.length, applied };
+    if (notFound.length)
+      result.notFound = notFound;
+    if (errors.length)
+      result.errors = errors;
+    return result;
+  }
 
   // src/handlers/create.js
   var createHandlers = {
