@@ -35,13 +35,24 @@ claude mcp add --scope user claude-bridge -- node "$(pwd)/mcp.mjs"
 
 `--scope user` makes the tools available in every project. The hub listens on `http://localhost:3571` (loopback only — not exposed to your network).
 
-### 2. Load the plugin in Figma
+### 2. Add the Figma skills (once)
+
+```bash
+cd figma-skills
+node build.mjs --link
+```
+
+Links the audit skills — `cp-frame-audit` (everything at once), `cp-layout-audit`, `cp-spacing-audit`, `cp-layer-naming`, `cp-layer-cleanup`, `cp-token-audit` — into `~/.claude/skills`, so every Claude Code session can run them (*"full audit of the selected frames"*, *"проверь отступы"*). They read the selection through the bridge, report numbered issues and fix only the ones you pick.
+
+It also creates `~/.claude-bridge/protected-names.md`: product names that contain numbers (one per line, in backticks), which the naming checks never touch. The list is per computer and never goes into git — fill it in on each machine.
+
+### 3. Load the plugin in Figma
 
 Figma Desktop → **Plugins → Development → Import plugin from manifest** → select `manifest.json`. Run it in a file — the card turns green (*Connected*) once a Claude Code session is running.
 
 The first time, the card asks for a code instead (*Pair with Claude*): ask Claude to do anything in Figma and it will read you the code (it's also in `~/.claude-bridge/pairing-key`, and `node server/server.js` prints it). Type it in once; the plugin remembers it on this computer.
 
-### 3. Talk to Claude
+### 4. Talk to Claude
 
 Open Claude Code anywhere and ask:
 

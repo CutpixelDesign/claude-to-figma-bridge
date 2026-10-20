@@ -21,6 +21,15 @@ If the MCP tools are missing (server not registered in this session), fall back 
 - `server/pairing.js` — the pairing key (`~/.claude-bridge/pairing-key`): a plugin gets commands only after it shows it. HTTP refuses browser requests (any `Origin`), non-JSON POSTs and foreign `Host` headers — see README → Security. Keep it that way.
 - `server/reference.md` — what `figma_reference` returns. `<!-- rules -->` splits the action catalog from the working rules; `{{NOTES_DIR}}` becomes this repo's `.figma-projects`.
 - `.figma-projects/{fileKey}/design.md` — private per-file design notes (git-ignored).
+- `figma-skills/` — Claude Code skills that audit and fix Figma designs through the bridge (see *Figma skills* below).
+
+## Figma skills (`figma-skills/`)
+
+- `src/skills/<name>/skill.md` — skill source; the folder name equals `name`, all skills are prefixed `cp-`. Each skill is a thin shell of includes: `<!-- @include shared/x.md -->` on its own line inlines a file (path from `src/`, or `./…`); any other `<!-- … -->` is an author note, stripped from the build (`<!-- TODO: … -->` for open questions).
+- `src/shared/checks/*.md` — one check per role (layout, spacing, naming, cleanup, tokens) with its own *How to fix*; role skills include one, `cp-frame-audit` includes all. `src/shared/*.md` — rules, workflow, bridge usage, fixing protocol, report format. `src/scripts/snapshot.mjs` — copied into every skill: reads the selection through the bridge's HTTP API, saves raw JSON to a temp folder, prints a compact tree. `src/drafts/` — postponed skills, not built.
+- `skills/<name>/` — build output, committed; never edit by hand. `node build.mjs` builds (`--watch`, `--link` also symlinks every skill into `~/.claude/skills`; a new skill shows up from the next session). `claude plugin validate figma-skills/skills` checks the result.
+- Agent-facing text in English; author notes may be in Russian.
+- Nothing machine- or client-specific goes into the skills: no absolute paths (the snapshot script finds the server relative to itself), no client product names. Protected names live per computer in `~/.claude-bridge/protected-names.md` (template: `figma-skills/protected-names.example.md`), read by the skill at run time.
 
 ## Development
 

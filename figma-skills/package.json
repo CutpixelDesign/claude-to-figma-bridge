@@ -1,0 +1,10 @@
+{
+  "name": "claude-bridge-figma-skills",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "link": "node build.mjs --link"
+  }
+}
