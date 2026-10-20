@@ -8,8 +8,9 @@ dist/
 .DS_Store
 
 # Editor / IDE
-.claude/
+.claude/settings.local.json
+.claude/memory/
 
-# Docs/notes
-design.md
-mcp-server-guide-main/
+# Private Figma project notes (not tracked in git)
+.figma-projects/
+

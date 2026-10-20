@@ -5,6 +5,8 @@
   "main": "code.js",
   "ui": "ui.html",
   "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "permissions": ["teamlibrary"],
   "networkAccess": {
     "allowedDomains": ["*"],
     "reasoning": "Requires access to local bridge server at localhost:3571"

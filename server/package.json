@@ -1,12 +1,16 @@
 {
   "name": "claude-bridge-server",
   "version": "1.0.0",
+  "license": "MIT",
+  "author": "Yevhenii Petrenko",
   "description": "Local bridge server between Claude and Figma",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "ws": "^8.21.0",
+    "zod": "^4.6.7"
   }
 }
