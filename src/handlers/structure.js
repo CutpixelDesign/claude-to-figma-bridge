@@ -1,5 +1,21 @@
 // Structural operations: reparenting, batching, layer order, grouping, pages, viewport.
-import { requireNode, nodeInfo, resolveParent, pageNodeOf, errorMessage, runState } from '../lib/helpers.js';
+import { requireNode, nodeInfo, resolveParent, pageNodeOf, errorMessage, runState, loadSubtreeFonts } from '../lib/helpers.js';
+
+// Moving a node that contains text (into another parent, another page, or just to another
+// slot in the layer order) requires every font inside it to be loaded. Load them first;
+// when some aren't available on this machine, say which instead of Figma's raw error.
+async function moveWithFonts(nodes, move, what = 'move it') {
+  const missing = new Set();
+  for (const n of nodes) for (const f of await loadSubtreeFonts(n)) missing.add(f);
+  try {
+    return move();
+  } catch (e) {
+    if (missing.size) {
+      throw new Error(`Can't ${what}: these fonts aren't available on this machine — ${[...missing].join(', ')}. Install them, or move it in Figma by hand`);
+    }
+    throw e;
+  }
+}
 
 // Resolve { "$ref": "<index-or-label>.<path>" } markers in a batch command's params
 // against the results of earlier commands in the same batch. Plain values pass through,
@@ -34,7 +50,7 @@ export const structureHandlers = {
     const newParent = await figma.getNodeByIdAsync(params.newParentId);
     if (!newParent) throw new Error(`New parent not found: ${params.newParentId}`);
     if (!('appendChild' in newParent)) throw new Error('New parent cannot have children');
-    newParent.appendChild(node);
+    await moveWithFonts([node], () => newParent.appendChild(node), `move "${node.name}" into "${newParent.name}"`);
     return { success: true, newParentId: newParent.id, x: 'x' in node ? node.x : null, y: 'y' in node ? node.y : null };
   },
 
@@ -86,7 +102,7 @@ export const structureHandlers = {
     const node = await requireNode(params.nodeId);
     const parent = node.parent;
     if (!parent || !('insertChild' in parent)) throw new Error('Node has no reorderable parent');
-    parent.insertChild(params.index, node);
+    await moveWithFonts([node], () => parent.insertChild(params.index, node), `reorder "${node.name}"`);
     return { success: true, index: params.index };
   },
 
@@ -96,7 +112,7 @@ export const structureHandlers = {
     if (!parent || !('insertChild' in parent)) throw new Error('Node has no reorderable parent');
     // appendChild, not insertChild(length - 1): for a node already in this parent,
     // insertChild's index counts the node itself, so length - 1 lands one below the top.
-    parent.appendChild(node);
+    await moveWithFonts([node], () => parent.appendChild(node), `bring "${node.name}" to front`);
     return { success: true };
   },
 
@@ -104,7 +120,7 @@ export const structureHandlers = {
     const node = await requireNode(params.nodeId);
     const parent = node.parent;
     if (!parent || !('insertChild' in parent)) throw new Error('Node has no reorderable parent');
-    parent.insertChild(0, node);
+    await moveWithFonts([node], () => parent.insertChild(0, node), `send "${node.name}" to back`);
     return { success: true };
   },
 
@@ -116,7 +132,7 @@ export const structureHandlers = {
     const parent = params.parentId
       ? await figma.getNodeByIdAsync(params.parentId)
       : valid[0].parent;
-    const group = figma.group(valid, parent);
+    const group = await moveWithFonts(valid, () => figma.group(valid, parent), 'group these layers');
     if (params.name) group.name = params.name;
     return { success: true, ...nodeInfo(group) };
   },

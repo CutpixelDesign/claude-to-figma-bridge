@@ -112,6 +112,21 @@ export function loadFont(font) {
   return loadedFonts.get(key);
 }
 
+// Load every font used by the texts in a subtree — Figma refuses to move a node to another
+// page (appendChild) while any of its texts has an unloaded font. Returns the fonts that
+// couldn't be loaded (not installed / not available), as "Family Style" strings.
+export async function loadSubtreeFonts(node) {
+  const texts = node.type === 'TEXT' ? [node] : 'findAllWithCriteria' in node ? node.findAllWithCriteria({ types: ['TEXT'] }) : [];
+  const fonts = new Map();
+  for (const t of texts) {
+    const segs = t.characters.length ? t.getStyledTextSegments(['fontName']) : [];
+    if (!segs.length && t.fontName !== figma.mixed) fonts.set(JSON.stringify(t.fontName), t.fontName);
+    for (const seg of segs) fonts.set(JSON.stringify(seg.fontName), seg.fontName);
+  }
+  const results = await Promise.allSettled([...fonts.values()].map(loadFont));
+  return [...fonts.values()].filter((f, i) => results[i].status === 'rejected').map(f => `${f.family} ${f.style}`);
+}
+
 // Load every font a text node uses — required before changing its characters, size,
 // or any typography. Empty text nodes report no segments but still need their base font.
 export async function loadNodeFonts(node) {

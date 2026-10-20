@@ -123,6 +123,8 @@ All audits take `scopeId?` (default: current page).
 - `set_selection` — select nodes (`nodeIds`); switches to the first node's page, nodes on other pages come back in `skipped`
 - `notify` — show toast in Figma (`message`, `error?`)
 
+**Moving layers that contain text** (`reparent`, `reorder`, `bring_to_front`, `send_to_back`, `group`) needs every font inside loaded — the bridge loads them itself. When a font isn't available on this machine, Figma doesn't let plugins move that layer at all: the error names the missing fonts — ask the designer to move it by hand (e.g. right-click → Move to page), or install the fonts.
+
 **Layer order:**
 - `bring_to_front` — bring to front (`nodeId`)
 - `send_to_back` — send to back (`nodeId`)

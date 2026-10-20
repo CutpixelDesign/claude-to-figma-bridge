@@ -123,6 +123,19 @@
     }
     return loadedFonts.get(key);
   }
+  async function loadSubtreeFonts(node) {
+    const texts = node.type === "TEXT" ? [node] : "findAllWithCriteria" in node ? node.findAllWithCriteria({ types: ["TEXT"] }) : [];
+    const fonts = /* @__PURE__ */ new Map();
+    for (const t of texts) {
+      const segs = t.characters.length ? t.getStyledTextSegments(["fontName"]) : [];
+      if (!segs.length && t.fontName !== figma.mixed)
+        fonts.set(JSON.stringify(t.fontName), t.fontName);
+      for (const seg of segs)
+        fonts.set(JSON.stringify(seg.fontName), seg.fontName);
+    }
+    const results = await Promise.allSettled([...fonts.values()].map(loadFont));
+    return [...fonts.values()].filter((f, i) => results[i].status === "rejected").map((f) => `${f.family} ${f.style}`);
+  }
   async function loadNodeFonts(node) {
     const fonts = /* @__PURE__ */ new Map();
     for (const seg of node.getStyledTextSegments(["fontName"])) {
@@ -3075,6 +3088,20 @@
   };
 
   // src/handlers/structure.js
+  async function moveWithFonts(nodes, move, what = "move it") {
+    const missing = /* @__PURE__ */ new Set();
+    for (const n of nodes)
+      for (const f of await loadSubtreeFonts(n))
+        missing.add(f);
+    try {
+      return move();
+    } catch (e) {
+      if (missing.size) {
+        throw new Error(`Can't ${what}: these fonts aren't available on this machine \u2014 ${[...missing].join(", ")}. Install them, or move it in Figma by hand`);
+      }
+      throw e;
+    }
+  }
   function resolveRefs(value, scope) {
     if (Array.isArray(value))
       return value.map((v) => resolveRefs(v, scope));
@@ -3111,7 +3138,7 @@
         throw new Error(`New parent not found: ${params.newParentId}`);
       if (!("appendChild" in newParent))
         throw new Error("New parent cannot have children");
-      newParent.appendChild(node);
+      await moveWithFonts([node], () => newParent.appendChild(node), `move "${node.name}" into "${newParent.name}"`);
       return { success: true, newParentId: newParent.id, x: "x" in node ? node.x : null, y: "y" in node ? node.y : null };
     },
     async batch(params, dispatch2) {
@@ -3159,7 +3186,7 @@
       const parent = node.parent;
       if (!parent || !("insertChild" in parent))
         throw new Error("Node has no reorderable parent");
-      parent.insertChild(params.index, node);
+      await moveWithFonts([node], () => parent.insertChild(params.index, node), `reorder "${node.name}"`);
       return { success: true, index: params.index };
     },
     async bring_to_front(params) {
@@ -3167,7 +3194,7 @@
       const parent = node.parent;
       if (!parent || !("insertChild" in parent))
         throw new Error("Node has no reorderable parent");
-      parent.appendChild(node);
+      await moveWithFonts([node], () => parent.appendChild(node), `bring "${node.name}" to front`);
       return { success: true };
     },
     async send_to_back(params) {
@@ -3175,7 +3202,7 @@
       const parent = node.parent;
       if (!parent || !("insertChild" in parent))
         throw new Error("Node has no reorderable parent");
-      parent.insertChild(0, node);
+      await moveWithFonts([node], () => parent.insertChild(0, node), `send "${node.name}" to back`);
       return { success: true };
     },
     async group(params) {
@@ -3184,7 +3211,7 @@
       if (valid.length === 0)
         throw new Error("No valid nodes to group");
       const parent = params.parentId ? await figma.getNodeByIdAsync(params.parentId) : valid[0].parent;
-      const group = figma.group(valid, parent);
+      const group = await moveWithFonts(valid, () => figma.group(valid, parent), "group these layers");
       if (params.name)
         group.name = params.name;
       return __spreadValues({ success: true }, nodeInfo(group));
