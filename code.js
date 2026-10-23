@@ -940,6 +940,140 @@
         return out;
       return out.filter((i) => cid && (i.mainComponentId === cid || i.componentSetId === cid) || cname && (i.mainComponentName === cname || i.componentSetName === cname));
     },
+    async find_swapped_components(params) {
+      var _a, _b, _c;
+      const roots = await scopeRoots(params);
+      const byId = /* @__PURE__ */ new Map();
+      let scanned = 0, withSwapProps = 0;
+      for (const root of roots) {
+        for (const n of root.findAllWithCriteria({ types: ["INSTANCE"] })) {
+          scanned++;
+          let props;
+          try {
+            props = n.componentProperties;
+          } catch (e) {
+            continue;
+          }
+          let has = false;
+          for (const [key, p] of Object.entries(props)) {
+            if (p.type !== "INSTANCE_SWAP" || typeof p.value !== "string")
+              continue;
+            has = true;
+            if (!byId.has(p.value))
+              byId.set(p.value, []);
+            byId.get(p.value).push(__spreadValues({ id: n.id, name: n.name, property: key.split("#")[0] }, params.allPages ? { page: (_a = pageOf(n)) == null ? void 0 : _a.name } : {}));
+          }
+          if (has)
+            withSwapProps++;
+        }
+      }
+      const wantNames = params.names ? new Set(params.names) : null;
+      const wantIds = params.componentIds ? new Set(params.componentIds) : null;
+      const limit = (_b = params.limitPerComponent) != null ? _b : 50;
+      const components = [];
+      for (const [id, instances] of byId) {
+        if (wantIds && !wantIds.has(id))
+          continue;
+        const comp = await figma.getNodeByIdAsync(id);
+        const set = comp && ((_c = comp.parent) == null ? void 0 : _c.type) === "COMPONENT_SET" ? comp.parent : null;
+        if (wantNames && !(comp && (wantNames.has(comp.name) || set && wantNames.has(set.name))))
+          continue;
+        components.push({
+          id,
+          name: comp ? set ? set.name : comp.name : null,
+          type: comp ? comp.type : null,
+          remote: comp && "remote" in comp ? comp.remote : null,
+          count: instances.length,
+          instances: instances.slice(0, limit)
+        });
+      }
+      components.sort((a, b) => b.count - a.count);
+      return { scanned, withSwapProps, components };
+    },
+    async find_bound_variables(params) {
+      var _a, _b, _c, _d, _e;
+      const REMOTE = /^VariableID:[0-9a-f]{40}\//;
+      const roots = await scopeRoots(params);
+      const limitDirect = (_a = params.limitDirect) != null ? _a : 2e3;
+      const samples = (_b = params.sampleInstances) != null ? _b : 3;
+      const refs = (n) => {
+        const out = [];
+        const add = (field, bv) => {
+          for (const [prop, b] of Object.entries(bv || {})) {
+            for (const a of Array.isArray(b) ? b : [b])
+              if (a && a.id && REMOTE.test(a.id))
+                out.push([`${field}${prop}`, a.id]);
+          }
+        };
+        if ("boundVariables" in n)
+          add("", n.boundVariables);
+        for (const prop of ["fills", "strokes", "effects"]) {
+          if (prop in n && Array.isArray(n[prop]))
+            n[prop].forEach((p, i) => add(`${prop}[${i}].`, p.boundVariables));
+        }
+        return out;
+      };
+      const direct = [], nestedMap = /* @__PURE__ */ new Map(), ownerOf = /* @__PURE__ */ new Map(), variableIds = /* @__PURE__ */ new Set();
+      let scanned = 0, directTotal = 0;
+      for (const root of roots) {
+        for (const n of root.findAll()) {
+          if (++scanned % 3e3 === 0)
+            await new Promise((r) => setTimeout(r, 0));
+          const found = refs(n);
+          if (!found.length)
+            continue;
+          if (!n.id.startsWith("I")) {
+            let inst = null;
+            if (n.type === "INSTANCE") {
+              const main = await n.getMainComponentAsync();
+              const set = main && ((_c = main.parent) == null ? void 0 : _c.type) === "COMPONENT_SET" ? main.parent : null;
+              if (main)
+                inst = { main: set ? set.name : main.name, mainKey: main.key, mainRemote: main.remote };
+            }
+            for (const [field, variable] of found) {
+              variableIds.add(variable);
+              directTotal++;
+              if (direct.length < limitDirect)
+                direct.push(__spreadValues(__spreadValues({ id: n.id, name: n.name, type: n.type, field, variable }, inst), params.allPages ? { page: (_d = pageOf(n)) == null ? void 0 : _d.name } : {}));
+            }
+            continue;
+          }
+          let outer = null;
+          for (let p = n.parent; p && p.type !== "PAGE"; p = p.parent)
+            if (p.type === "INSTANCE")
+              outer = p;
+          if (!outer)
+            continue;
+          if (!ownerOf.has(outer.id)) {
+            const main = await outer.getMainComponentAsync();
+            const set = main && ((_e = main.parent) == null ? void 0 : _e.type) === "COMPONENT_SET" ? main.parent : null;
+            ownerOf.set(outer.id, main ? { name: set ? set.name : main.name, remote: main.remote, key: main.key } : { name: null, remote: null, key: null });
+          }
+          const owner = ownerOf.get(outer.id);
+          for (const [, variable] of found) {
+            variableIds.add(variable);
+            const key = `${variable}|${owner.name}`;
+            if (!nestedMap.has(key))
+              nestedMap.set(key, { variable, owner: owner.name, ownerRemote: owner.remote, ownerKey: owner.key, count: 0, instances: /* @__PURE__ */ new Set() });
+            const g = nestedMap.get(key);
+            g.count++;
+            if (g.instances.size < samples)
+              g.instances.add(outer.id);
+          }
+        }
+      }
+      const variables = {};
+      for (const id of variableIds) {
+        try {
+          const v = await figma.variables.getVariableByIdAsync(id);
+          variables[id] = v ? v.name : null;
+        } catch (e) {
+          variables[id] = null;
+        }
+      }
+      const nested = [...nestedMap.values()].map((g) => __spreadProps(__spreadValues({}, g), { sampleInstances: [...g.instances], instances: void 0 })).sort((a, b) => b.count - a.count);
+      return { scanned, directTotal, direct, nested, variables };
+    },
     async get_local_components(params) {
       const roots = await scopeRoots(params);
       const comps = roots.flatMap((r) => r.findAllWithCriteria({ types: ["COMPONENT", "COMPONENT_SET"] })).filter((c) => {
